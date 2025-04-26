@@ -176,8 +176,9 @@ async fn crawl_and_save_data(
                                     Ok(Some(db_stock)) => {
                                         // 保存價格到資料庫，使用從資料庫中查詢到的股票 ID
                                         for price in prices {
+                                            let stock_id = Uuid::parse_str(&db_stock.id).unwrap_or_default();
                                             let price_with_stock_id = StockPrice {
-                                                stock_id: Uuid::parse_str(&db_stock.id).unwrap_or_default(),
+                                                stock_id,
                                                 ..price
                                             };
                                             
