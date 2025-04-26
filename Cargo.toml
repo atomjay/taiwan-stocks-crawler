@@ -1,0 +1,40 @@
+[package]
+name = "taiwan-stocks-crawler"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jay"]
+description = "A Taiwan stocks crawler with Domain-Driven Design architecture"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full", "time"] }
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Error handling
+anyhow = "1.0"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "time", "uuid", "json", "bigdecimal"] }
+# Environment variables
+dotenv = "0.15"
+# Date and time
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+chrono = { version = "0.4", features = ["serde"] }
+# HTML parsing
+scraper = "0.18"
+# UUID generation
+uuid = { version = "1.6", features = ["v4", "serde"] }
+# Async traits
+async-trait = "0.1"
+# Web framework
+axum = { version = "0.7", features = ["json"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }
+bigdecimal = "0.4.8"
+
+[dev-dependencies]

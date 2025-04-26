@@ -1,0 +1,2 @@
+-- This is a placeholder for a previously applied migration
+-- DO NOT MODIFY THIS FILE
