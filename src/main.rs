@@ -3,16 +3,18 @@ use crate::application::services::{StockPriceService, StockService};
 // 引入應用層 DTO
 use crate::application::dtos::{CreateStockDto, CreateStockPriceDto};
 // 引入基礎設施層的爬蟲服務
-use crate::infrastructure::external_services::StockCrawlerService;
+use crate::infra::external_services::stock_crawler_service::StockCrawlerService;
 // 引入基礎設施層的資料庫儲存庫實現
-use crate::infrastructure::persistence::{PostgresStockPriceRepository, PostgresStockRepository};
+use crate::infra::db::postgres_stock_repository::PostgresStockRepository;
+use crate::infra::db::postgres_stock_price_repository::PostgresStockPriceRepository;
 // 引入資料庫連接池創建函數
-use crate::infrastructure::persistence::database::create_pool;
+use crate::infra::db::database::create_pool;
 // 引入表現層控制器和處理函數
-use crate::presentation::controllers::{
-    StockController, StockPriceController,
-    get_all_stocks, get_stock_by_code, get_stock_prices_by_stock_id
+use crate::api::controllers::{
+    stock_controller::StockController, 
+    stock_price_controller::StockPriceController,
 };
+use crate::api::routes::{get_all_stocks, get_stock_by_code, get_stock_prices_by_stock_id};
 // 引入 Axum Web 框架相關組件
 use axum::{
     Router,
@@ -32,7 +34,7 @@ use tracing::{info, error};
 use tracing_subscriber;
 
 // 引入領域實體
-use crate::domain::entities::StockPrice;
+use crate::domain::models::{Stock, StockPrice};
 
 // 引入 Uuid 類別
 use uuid::Uuid;
@@ -217,11 +219,11 @@ async fn start_web_server(app: Router) -> Result<(), Box<dyn Error>> {
 // 使用遷移系統確保資料庫結構存在
 async fn run_migrations(database_url: &str) -> Result<(), Box<dyn Error>> {
     // 調用 database.rs 中的 run_migrations 函數
-    infrastructure::persistence::database::run_migrations(database_url).await
+    infra::db::database::run_migrations(database_url).await
 }
 
 // 模組聲明
 mod domain;
 mod application;
-mod infrastructure;
-mod presentation;
+mod infra;
+mod api;

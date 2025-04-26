@@ -1,4 +1,4 @@
-use crate::domain::entities::Stock;
+use crate::domain::models::Stock;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;

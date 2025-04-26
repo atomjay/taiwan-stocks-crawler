@@ -1,5 +1,5 @@
 use crate::application::dtos::{CreateStockDto, CreateStockPriceDto};
-use crate::presentation::controllers::{StockController, StockPriceController};
+use crate::api::controllers::{stock_controller::StockController, stock_price_controller::StockPriceController};
 use axum::{
     extract::{Extension, Path, Query},
     http::StatusCode,
@@ -44,7 +44,7 @@ fn stock_price_routes(stock_price_controller: Arc<StockPriceController>) -> Rout
         .layer(Extension(stock_price_controller))
 }
 
-async fn get_all_stocks(
+pub async fn get_all_stocks(
     Extension(controller): Extension<Arc<StockController>>,
 ) -> impl IntoResponse {
     match controller.get_all_stocks().await {
@@ -86,7 +86,7 @@ async fn get_stock_by_id(
     }
 }
 
-async fn get_stock_by_code(
+pub async fn get_stock_by_code(
     Path(code): Path<String>,
     Extension(controller): Extension<Arc<StockController>>,
 ) -> impl IntoResponse {
@@ -130,7 +130,7 @@ async fn get_stock_price_by_id(
     }
 }
 
-async fn get_stock_prices_by_stock_id(
+pub async fn get_stock_prices_by_stock_id(
     Path(stock_id): Path<String>,
     Query(query): Query<DateRangeQuery>,
     Extension(controller): Extension<Arc<StockPriceController>>,

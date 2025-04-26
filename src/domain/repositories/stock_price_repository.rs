@@ -1,4 +1,4 @@
-use crate::domain::entities::StockPrice;
+use crate::domain::models::StockPrice;
 use crate::domain::value_objects::Result;
 use async_trait::async_trait;
 use time::Date;

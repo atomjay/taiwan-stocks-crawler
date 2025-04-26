@@ -1,4 +1,6 @@
-# 台灣股票爬蟲系統 (Taiwan Stocks Crawler)
+# 這是我個人學習 Rust 的專案
+
+## 台灣股票爬蟲系統 (Taiwan Stocks Crawler)
 
 這是一個基於領域驅動設計 (DDD) 的台灣股票資料爬蟲系統，專注於從台灣證券交易所和 Yahoo Finance 爬取股票資料並存儲到 PostgreSQL 資料庫中。系統採用 Rust 語言開發，具有高效能和穩定性。
 
@@ -27,12 +29,12 @@
 
 ## 系統架構
 
-本專案採用領域驅動設計 (DDD) 架構，分為四個主要層次：
+本專案採用領域驅動設計 (DDD) 架構，分為四個主要層次，並經過重構以簡化結構：
 
 ```
 src/
   ├── domain/                    # 領域層 - 核心業務邏輯和規則
-  │   ├── entities/              # 實體 - 具有唯一標識的對象
+  │   ├── models/                # 實體模型 - 具有唯一標識的對象
   │   │   ├── stock.rs           # 股票實體
   │   │   └── stock_price.rs     # 股價實體
   │   ├── repositories/          # 儲存庫接口 - 定義數據存取方法
@@ -49,20 +51,19 @@ src/
   │       ├── stock_service.rs
   │       └── stock_price_service.rs
   │
-  ├── infrastructure/            # 基礎設施層 - 技術實現
-  │   ├── persistence/           # 持久化實現 - 數據庫操作
+  ├── infra/                     # 基礎設施層 - 技術實現 (簡化名稱)
+  │   ├── db/                    # 資料庫相關 - 數據庫操作 (簡化名稱)
   │   │   ├── database.rs
   │   │   ├── postgres_stock_repository.rs
   │   │   └── postgres_stock_price_repository.rs
   │   └── external_services/     # 外部服務 - 與外部系統交互
   │       └── stock_crawler_service.rs
   │
-  ├── presentation/              # 表現層 - 用戶界面
-  │   ├── api/                   # API 路由 - 定義 API 端點
-  │   │   └── api_router.rs
-  │   └── controllers/           # 控制器 - 處理請求和響應
-  │       ├── stock_controller.rs
-  │       └── stock_price_controller.rs
+  ├── api/                       # API 層 - 用戶界面 (簡化名稱)
+  │   ├── controllers/           # 控制器 - 處理請求和響應
+  │   │   ├── stock_controller.rs
+  │   │   └── stock_price_controller.rs
+  │   └── routes.rs              # API 路由 - 定義 API 端點 (簡化結構)
   │
   └── main.rs                    # 主程式入口點
 ```
@@ -94,7 +95,7 @@ PostgresStockPriceRepository.create() (保存股票價格到資料庫)
 ```
 HTTP 請求
   ↓
-api_router.rs (路由分發)
+routes.rs (路由分發)
   ↓
 StockController/StockPriceController (控制器處理請求)
   ↓

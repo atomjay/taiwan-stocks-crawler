@@ -1,4 +1,4 @@
-use crate::domain::entities::Stock;
+use crate::domain::models::Stock;
 use crate::domain::value_objects::Result;
 use async_trait::async_trait;
 use uuid::Uuid;

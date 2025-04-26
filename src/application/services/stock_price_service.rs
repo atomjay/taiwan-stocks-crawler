@@ -1,5 +1,5 @@
 use crate::application::dtos::{CreateStockPriceDto, StockPriceDto};
-use crate::domain::entities::StockPrice;
+use crate::domain::models::StockPrice;
 use crate::domain::repositories::StockPriceRepository;
 use crate::domain::value_objects::Result;
 use std::sync::Arc;

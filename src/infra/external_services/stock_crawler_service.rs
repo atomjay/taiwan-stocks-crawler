@@ -1,5 +1,5 @@
 // 引入必要的外部庫
-use crate::domain::entities::{Stock, StockPrice};
+use crate::domain::models::{Stock, StockPrice};
 use anyhow::Result;
 use reqwest::Client;
 use scraper::{Html, Selector};
