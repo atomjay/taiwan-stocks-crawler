@@ -19,7 +19,7 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "time", "uuid", "json", "bigdecimal"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "time", "uuid", "json", "bigdecimal", "migrate"] }
 # Environment variables
 dotenv = "0.15"
 # Date and time

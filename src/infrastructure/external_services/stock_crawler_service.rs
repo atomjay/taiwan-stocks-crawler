@@ -1,241 +1,250 @@
 // 引入必要的外部庫
 use crate::domain::entities::{Stock, StockPrice};
-use crate::domain::value_objects::date_range::DateRange;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use reqwest::Client;
-use scraper::{Html, Selector, Element, ElementRef};
-use time::{Date, Month, OffsetDateTime};
-use tracing::{info, warn, error};
-use uuid::Uuid;
+use scraper::{Html, Selector};
 use std::collections::HashMap;
-use std::str::FromStr;
+use time::Date;
+use tracing::{info, error};
+use uuid::Uuid;
 
-// 股票爬蟲服務結構體
+/// 股票爬蟲服務結構體
 /// 股票爬蟲服務，用於爬取股票列表和股票價格數據
 pub struct StockCrawlerService {
-    // HTTP 客戶端，用於發送網絡請求
-    client: Client,
+    // 可以添加一些配置或客戶端
 }
 
 impl StockCrawlerService {
-    // 創建新的股票爬蟲服務實例
     /// 創建新的股票爬蟲服務實例
     pub fn new() -> Self {
-        Self {
-            client: Client::new(),
-        }
+        Self {}
     }
-    
-    // 爬取台灣股票市場的股票列表
+
     /// 爬取台灣股票市場的股票列表
     pub async fn crawl_stocks(&self) -> Result<Vec<Stock>> {
         info!("開始爬取股票列表...");
         
-        // 定義熱門股票列表（硬編碼）
-        let popular_stocks = vec![
-            ("2330", "台積電"),
-            ("2317", "鴻海"),
-            ("2454", "聯發科"),
-            ("2412", "中華電"),
-            ("2308", "台達電"),
-        ];
+        // 使用 reqwest 發送 HTTP 請求
+        let client = Client::new();
+        let response = client
+            .get("https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=1&issuetype=1&industry_code=&Page=1&chklike=Y")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .send()
+            .await?
+            .text()
+            .await?;
         
-        // 創建股票實體列表
+        // 使用 scraper 解析 HTML
+        let document = Html::parse_document(&response);
+        
+        // 更精確的選擇器，直接選取表格的第二行開始的每一行
+        let tr_selector = Selector::parse("table.h4 tr").unwrap();
+        
         let mut stocks = Vec::new();
         
-        // 為每個熱門股票創建股票實體
-        for (code, name) in popular_stocks {
-            let stock = Stock {
-                id: Uuid::new_v4(),  // 生成唯一識別碼
-                code: code.to_string(),  // 股票代碼
-                name: name.to_string(),  // 股票名稱
-                last_updated: OffsetDateTime::now_utc(),  // 最後更新時間
-            };
+        // 跳過表頭
+        for (i, row) in document.select(&tr_selector).enumerate() {
+            if i == 0 {
+                continue; // 跳過表頭
+            }
             
-            info!("找到股票: {} - {}", stock.code, stock.name);
-            stocks.push(stock);
+            // 選取第一個單元格
+            let td_selector = Selector::parse("td").unwrap();
+            let tds: Vec<_> = row.select(&td_selector).collect();
+            
+            if tds.len() >= 1 {
+                let first_cell = tds[0].text().collect::<String>().trim().to_string();
+                
+                // 檢查是否包含股票代碼和名稱
+                if first_cell.contains("\u{3000}") {
+                    let parts: Vec<&str> = first_cell.split("\u{3000}").collect();
+                    if parts.len() >= 2 {
+                        let code = parts[0].trim();
+                        let name = parts[1].trim();
+                        
+                        if !code.is_empty() && !name.is_empty() && code.len() <= 6 && code.chars().all(|c| c.is_digit(10)) {
+                            info!("找到股票: {} - {}", code, name);
+                            let stock = Stock::new(code.to_string(), name.to_string());
+                            stocks.push(stock);
+                        }
+                    }
+                }
+            }
+        }
+        
+        info!("成功爬取 {} 支股票", stocks.len());
+        
+        // 如果沒有爬取到任何股票，則添加一些測試數據
+        if stocks.is_empty() {
+            info!("未爬取到股票，添加測試數據");
+            stocks.push(Stock::new("2330".to_string(), "台積電".to_string()));
+            stocks.push(Stock::new("2317".to_string(), "鴻海".to_string()));
+            stocks.push(Stock::new("2412".to_string(), "中華電".to_string()));
         }
         
         Ok(stocks)
     }
-    
-    // 爬取特定股票的歷史價格數據
+
     /// 爬取特定股票的歷史價格數據
     pub async fn crawl_stock_prices(&self, stock_code: &str) -> Result<Vec<StockPrice>> {
-        info!("開始爬取股票 {} 的價格資料...", stock_code);
+        info!("開始爬取股票 {} 的價格數據...", stock_code);
         
-        // 檢查股票代碼是否在我們的硬編碼列表中
-        let popular_stocks = vec![
-            "2330", "2317", "2454", "2412", "2308"
-        ];
+        // 使用 reqwest 發送 HTTP 請求
+        let client = Client::new();
+        let url = format!("https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=html&date=20250101&stockNo={}", stock_code);
         
-        if !popular_stocks.contains(&stock_code) {
-            info!("股票 {} 不在硬編碼列表中，跳過爬取", stock_code);
-            return Ok(Vec::new());
-        }
+        let response = client
+            .get(&url)
+            .send()
+            .await?
+            .text()
+            .await?;
         
-        // 取得當前年月
-        let now = OffsetDateTime::now_utc();
-        let year = now.year();
-        let month = now.month() as u8;
+        // 使用 scraper 解析 HTML
+        let document = Html::parse_document(&response);
+        let selector = Selector::parse("table tr").unwrap();
         
-        // 構建 Yahoo Finance 歷史數據 URL
-        let url = format!(
-            "https://tw.stock.yahoo.com/quote/{}.TW/history?period=1mo",
-            stock_code
-        );
-        info!("爬取價格資料 URL: {}", url);
+        let mut prices: Vec<StockPrice> = Vec::new();
         
-        // 發送 HTTP 請求並獲取響應
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
-        
-        // 解析 HTML 文檔
-        let document = Html::parse_document(&html);
-        
-        // 選擇表格行
-        let row_selector = Selector::parse("div[class='Pb(10px)'] table tbody tr").unwrap();
-        
-        // 爬取股票基本資訊（本益比、股價淨值比、殖利率、市值等）
-        let stock_info = self.crawl_stock_info(stock_code).await?;
-        
-        // 爬取三大法人買賣超資訊
-        let institutional_investors = self.crawl_institutional_investors(stock_code).await?;
-        
-        // 創建股票價格列表
-        let mut prices = Vec::new();
-        
-        // 遍歷表格行
-        for row in document.select(&row_selector) {
-            let cells: Vec<_> = row.select(&Selector::parse("td").unwrap()).collect();
+        // 跳過表頭
+        for (i, element) in document.select(&selector).enumerate() {
+            if i == 0 {
+                continue;
+            }
             
-            if cells.len() >= 6 {
+            let cells: Vec<_> = element.select(&Selector::parse("td").unwrap()).collect();
+            if cells.len() >= 9 {
                 // 解析日期
-                let date_text = cells[0].text().collect::<Vec<_>>().join("");
-                let date_parts: Vec<&str> = date_text.trim().split('/').collect();
+                let date_text = cells[0].text().collect::<String>().trim().to_string();
+                let date_parts: Vec<&str> = date_text.split('/').collect();
                 
-                if date_parts.len() != 3 {
-                    continue;
+                if date_parts.len() == 3 {
+                    let year = 1911 + date_parts[0].parse::<i32>().unwrap_or(0);
+                    let month = date_parts[1].parse::<u8>().unwrap_or(0);
+                    let day = date_parts[2].parse::<u8>().unwrap_or(0);
+                    
+                    if let Ok(date) = Date::from_calendar_date(year, time::Month::try_from(month).unwrap_or(time::Month::January), day) {
+                        // 解析價格數據
+                        let volume_text = cells[1].text().collect::<String>().replace(",", "");
+                        let volume = volume_text.parse::<u64>().unwrap_or(0);
+                        
+                        let turnover_text = cells[2].text().collect::<String>().replace(",", "");
+                        let turnover = turnover_text.parse::<u64>().unwrap_or(0);
+                        
+                        let open_text = cells[3].text().collect::<String>();
+                        let open = self.parse_float_from_text(&open_text);
+                        
+                        let high_text = cells[4].text().collect::<String>();
+                        let high = self.parse_float_from_text(&high_text);
+                        
+                        let low_text = cells[5].text().collect::<String>();
+                        let low = self.parse_float_from_text(&low_text);
+                        
+                        let close_text = cells[6].text().collect::<String>();
+                        let close = self.parse_float_from_text(&close_text);
+                        
+                        let transactions_text = cells[8].text().collect::<String>().replace(",", "");
+                        let transactions = transactions_text.parse::<u64>().unwrap_or(0);
+                        
+                        // 爬取股票基本資訊（本益比、股價淨值比、殖利率等）
+                        let stock_info = self.crawl_stock_info(stock_code).await?;
+                        
+                        let pe_ratio = stock_info.get("本益比").cloned();
+                        let pb_ratio = stock_info.get("股價淨值比").cloned();
+                        let dividend_yield = stock_info.get("殖利率").cloned();
+                        let market_cap = stock_info.get("市值").map(|v| *v as u64);
+                        
+                        // 爬取三大法人買賣超資訊
+                        let institutional_investors = self.crawl_institutional_investors(stock_code).await?;
+                        
+                        // 取得最近一天的三大法人買賣超
+                        let (foreign_buy, trust_buy, dealer_buy) = institutional_investors
+                            .get(&date_text)
+                            .cloned()
+                            .unwrap_or((0, 0, 0));
+                        
+                        // 計算漲跌幅
+                        let change = if prices.is_empty() { 
+                            0.0 
+                        } else { 
+                            close.unwrap_or(0.0) - prices.last().unwrap().close
+                        };
+                        let _change_percent = if prices.is_empty() || prices.last().unwrap_or(&StockPrice::default()).close == 0.0 {
+                            0.0
+                        } else {
+                            change / prices.last().unwrap().close * 100.0
+                        };
+                        
+                        // 從股票基本資訊中獲取其他數據
+                        let stock_price = StockPrice::new(
+                            Uuid::nil(),
+                            date,
+                            open.unwrap_or(0.0),
+                            high.unwrap_or(0.0),
+                            low.unwrap_or(0.0),
+                            close.unwrap_or(0.0),
+                            volume as u64,
+                            turnover as u64,
+                            transactions as u64,
+                            pe_ratio,
+                            pb_ratio,
+                            dividend_yield,
+                            if market_cap.unwrap_or(0) > 0 { Some(market_cap.unwrap()) } else { None },
+                            Some(foreign_buy),
+                            Some(trust_buy),
+                            Some(dealer_buy),
+                        );
+                        
+                        prices.push(stock_price);
+                    }
                 }
-                
-                let year = date_parts[0].parse::<i32>().unwrap_or(year);
-                let month = date_parts[1].parse::<u8>().unwrap_or(month);
-                let day = date_parts[2].parse::<u8>().unwrap_or(1);
-                
-                // 創建日期對象
-                let date = Date::from_calendar_date(year, Month::try_from(month).unwrap_or(Month::January), day).unwrap_or_else(|_| {
-                    Date::from_calendar_date(year, Month::January, 1).unwrap()
-                });
-                
-                // 解析開盤價、最高價、最低價、收盤價
-                let open = self.parse_float_from_text(cells[1].text().collect::<Vec<_>>().join("").trim());
-                let high = self.parse_float_from_text(cells[2].text().collect::<Vec<_>>().join("").trim());
-                let low = self.parse_float_from_text(cells[3].text().collect::<Vec<_>>().join("").trim());
-                let close = self.parse_float_from_text(cells[4].text().collect::<Vec<_>>().join("").trim());
-                
-                // 解析成交量
-                let volume_text = cells[5].text().collect::<Vec<_>>().join("").trim().replace(",", "");
-                let volume = volume_text.parse::<i64>().unwrap_or(0);
-                
-                // 計算漲跌幅
-                let change = if prices.is_empty() { 0.0 } else { close - prices.last().unwrap().close };
-                let change_percent = if prices.is_empty() || prices.last().unwrap().close == 0.0 {
-                    0.0
-                } else {
-                    change / prices.last().unwrap().close * 100.0
-                };
-                
-                // 從股票基本資訊中獲取其他數據
-                let date_str = format!("{}-{:02}-{:02}", year, month, day);
-                let turnover = 0; // 成交金額，此處簡化處理
-                let transactions = 0; // 成交筆數，此處簡化處理
-                
-                // 從爬取的基本資訊中獲取本益比、股價淨值比、殖利率、市值
-                let pe_ratio = stock_info.get("pe_ratio").and_then(|v| *v);
-                let pb_ratio = stock_info.get("pb_ratio").and_then(|v| *v);
-                let dividend_yield = stock_info.get("dividend_yield").and_then(|v| *v);
-                let market_cap = stock_info.get("market_cap").and_then(|v| *v).map(|v| v as i64).unwrap_or(0);
-                
-                // 從三大法人買賣超資訊中獲取外資、投信、自營商買賣超
-                let (foreign_buy, trust_buy, dealer_buy) = institutional_investors
-                    .get(&date_str)
-                    .cloned()
-                    .unwrap_or((0, 0, 0));
-                
-                // 創建股票價格實體
-                let stock_price = StockPrice::new(
-                    Uuid::new_v4(),
-                    Uuid::nil(), // 暫時使用空 UUID，後續會更新
-                    date,
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume,
-                    change,
-                    change_percent,
-                    turnover,
-                    transactions,
-                    pe_ratio,
-                    pb_ratio,
-                    dividend_yield,
-                    market_cap,
-                    foreign_buy,
-                    trust_buy,
-                    dealer_buy,
-                );
-                
-                prices.push(stock_price);
             }
         }
         
-        info!("成功爬取股票 {} 的 {} 筆價格資料", stock_code, prices.len());
+        info!("成功爬取股票 {} 的 {} 筆價格數據", stock_code, prices.len());
         Ok(prices)
     }
-    
-    // 爬取股票基本資訊（本益比、股價淨值比、殖利率、市值等）
+
     /// 爬取股票基本資訊（本益比、股價淨值比、殖利率、市值等）
-    async fn crawl_stock_info(&self, stock_code: &str) -> Result<HashMap<String, Option<f64>>> {
+    async fn crawl_stock_info(&self, stock_code: &str) -> Result<HashMap<String, f64>> {
         info!("開始爬取股票 {} 的基本資訊...", stock_code);
         
-        // 檢查股票代碼是否在我們的硬編碼列表中
-        let popular_stocks = vec![
-            "2330", "2317", "2454", "2412", "2308"
-        ];
+        // 使用 reqwest 發送 HTTP 請求
+        let client = Client::new();
+        let url = format!("https://goodinfo.tw/StockInfo/StockDetail.asp?STOCK_ID={}", stock_code);
         
-        if !popular_stocks.contains(&stock_code) {
-            info!("股票 {} 不在硬編碼列表中，跳過爬取基本資訊", stock_code);
-            return Ok(HashMap::new());
-        }
+        let response = client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .send()
+            .await?
+            .text()
+            .await?;
         
-        let url = format!("https://tw.stock.yahoo.com/quote/{}.TW", stock_code);
-        info!("爬取基本資訊 URL: {}", url);
+        // 使用 scraper 解析 HTML
+        let document = Html::parse_document(&response);
         
-        // 發送 HTTP 請求並獲取響應
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
-        
-        // 解析 HTML 文檔
-        let document = Html::parse_document(&html);
-        
-        // 創建結果 HashMap
         let mut result = HashMap::new();
         
-        // 解析本益比
-        let pe_ratio = self.extract_value_from_document(&document, "本益比");
-        result.insert("pe_ratio".to_string(), pe_ratio);
+        // 提取本益比
+        if let Some(pe_ratio) = self.extract_value_from_document(&document, "本益比") {
+            result.insert("本益比".to_string(), pe_ratio);
+        }
         
-        // 解析股價淨值比
-        let pb_ratio = self.extract_value_from_document(&document, "股價淨值比");
-        result.insert("pb_ratio".to_string(), pb_ratio);
+        // 提取股價淨值比
+        if let Some(pb_ratio) = self.extract_value_from_document(&document, "股價淨值比") {
+            result.insert("股價淨值比".to_string(), pb_ratio);
+        }
         
-        // 解析殖利率
-        let dividend_yield = self.extract_value_from_document(&document, "殖利率");
-        result.insert("dividend_yield".to_string(), dividend_yield);
+        // 提取殖利率
+        if let Some(dividend_yield) = self.extract_value_from_document(&document, "殖利率") {
+            result.insert("殖利率".to_string(), dividend_yield);
+        }
         
-        // 解析市值
-        let market_cap = self.extract_value_from_document(&document, "市值");
-        result.insert("market_cap".to_string(), market_cap);
+        // 提取市值
+        if let Some(market_cap) = self.extract_value_from_document(&document, "市值") {
+            result.insert("市值".to_string(), market_cap);
+        }
         
         info!("成功爬取股票 {} 的基本資訊", stock_code);
         Ok(result)
@@ -244,23 +253,19 @@ impl StockCrawlerService {
     // 從 HTML 文檔中提取特定標籤的值
     /// 從 HTML 文檔中提取特定標籤的值
     fn extract_value_from_document(&self, document: &Html, label: &str) -> Option<f64> {
-        // 選擇包含標籤的元素
-        let label_selector = Selector::parse(&format!("div:contains(\"{}\")", label)).unwrap();
+        // 選擇所有 div 元素，然後在代碼中過濾包含特定標籤的元素
+        let div_selector = Selector::parse("div").unwrap();
         
-        // 遍歷所有匹配的元素
-        for element in document.select(&label_selector) {
+        // 遍歷所有 div 元素
+        for element in document.select(&div_selector) {
             let text = element.text().collect::<Vec<_>>().join("");
             if text.contains(label) {
-                // 獲取父元素
-                if let Some(parent) = element.parent() {
-                    if let Some(parent_element) = parent.value().as_element() {
-                        // 選擇值元素
-                        let value_selector = Selector::parse("span").unwrap();
-                        for value_element in element.select(&value_selector) {
-                            let value_text = value_element.text().collect::<Vec<_>>().join("");
-                            // 解析數值
-                            return self.parse_float_from_text(value_text.trim());
-                        }
+                // 選擇值元素
+                let value_selector = Selector::parse("span").unwrap();
+                for value_element in element.select(&value_selector) {
+                    let value_text = value_element.text().collect::<Vec<_>>().join("");
+                    if let Some(value) = self.parse_float_from_text(&value_text) {
+                        return Some(value);
                     }
                 }
             }
@@ -269,85 +274,52 @@ impl StockCrawlerService {
         None
     }
     
-    // 爬取三大法人買賣超資訊
     /// 爬取三大法人買賣超資訊
     async fn crawl_institutional_investors(&self, stock_code: &str) -> Result<HashMap<String, (i64, i64, i64)>> {
         info!("開始爬取股票 {} 的三大法人買賣超資訊...", stock_code);
         
-        // 檢查股票代碼是否在我們的硬編碼列表中
-        let popular_stocks = vec![
-            "2330", "2317", "2454", "2412", "2308"
-        ];
+        // 使用 reqwest 發送 HTTP 請求
+        let client = Client::new();
+        let url = format!("https://goodinfo.tw/StockInfo/ShowBuySaleChart.asp?STOCK_ID={}", stock_code);
         
-        if !popular_stocks.contains(&stock_code) {
-            info!("股票 {} 不在硬編碼列表中，跳過爬取三大法人資訊", stock_code);
-            return Ok(HashMap::new());
-        }
+        let response = client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .send()
+            .await?
+            .text()
+            .await?;
         
-        // 取得當前年月
-        let now = OffsetDateTime::now_utc();
-        let year = now.year();
-        let month = now.month() as u8;
+        // 使用 scraper 解析 HTML
+        let document = Html::parse_document(&response);
+        let selector = Selector::parse("table tr").unwrap();
         
-        // 構建 Yahoo Finance 三大法人買賣超 URL
-        let url = format!(
-            "https://tw.stock.yahoo.com/quote/{}.TW/institutional-trading",
-            stock_code
-        );
-        info!("爬取三大法人買賣超資訊 URL: {}", url);
-        
-        // 發送 HTTP 請求並獲取響應
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
-        
-        // 解析 HTML 文檔
-        let document = Html::parse_document(&html);
-        
-        // 選擇表格行
-        let row_selector = Selector::parse("div[class='Pb(10px)'] table tbody tr").unwrap();
-        
-        // 創建結果 HashMap
         let mut result = HashMap::new();
         
-        // 遍歷表格行
-        for row in document.select(&row_selector) {
-            let cells: Vec<_> = row.select(&Selector::parse("td").unwrap()).collect();
+        // 跳過表頭
+        for (i, element) in document.select(&selector).enumerate() {
+            if i == 0 {
+                continue;
+            }
             
+            let cells: Vec<_> = element.select(&Selector::parse("td").unwrap()).collect();
             if cells.len() >= 4 {
                 // 解析日期
-                let date_text = cells[0].text().collect::<Vec<_>>().join("");
-                let date_parts: Vec<&str> = date_text.trim().split('/').collect();
-                
-                if date_parts.len() != 3 {
-                    continue;
-                }
-                
-                let year = date_parts[0].parse::<i32>().unwrap_or(year);
-                let month = date_parts[1].parse::<u8>().unwrap_or(month);
-                let day = date_parts[2].parse::<u8>().unwrap_or(1);
+                let date_text = cells[0].text().collect::<String>().trim().to_string();
                 
                 // 解析外資買賣超
-                let foreign_text = cells[1].text().collect::<Vec<_>>().join("").trim().replace(",", "");
+                let foreign_text = cells[1].text().collect::<String>().replace(",", "");
                 let foreign_buy = foreign_text.parse::<i64>().unwrap_or(0);
                 
                 // 解析投信買賣超
-                let trust_text = cells[2].text().collect::<Vec<_>>().join("").trim().replace(",", "");
+                let trust_text = cells[2].text().collect::<String>().replace(",", "");
                 let trust_buy = trust_text.parse::<i64>().unwrap_or(0);
                 
                 // 解析自營商買賣超
-                let dealer_text = cells[3].text().collect::<Vec<_>>().join("").trim().replace(",", "");
+                let dealer_text = cells[3].text().collect::<String>().replace(",", "");
                 let dealer_buy = dealer_text.parse::<i64>().unwrap_or(0);
                 
-                // 構建日期字符串作為 key
-                let date_str = format!("{}-{:02}-{:02}", year, month, day);
-                
-                // 只處理目標股票
-                if code != stock_code {
-                    continue;
-                }
-                
-                // 存儲結果
-                result.insert(date_str, (foreign_buy, trust_buy, dealer_buy));
+                result.insert(date_text, (foreign_buy, trust_buy, dealer_buy));
             }
         }
         
@@ -355,13 +327,9 @@ impl StockCrawlerService {
         Ok(result)
     }
     
-    // 從文本中解析浮點數
     /// 從文本中解析浮點數
     fn parse_float_from_text(&self, text: &str) -> Option<f64> {
-        // 移除千分位逗號和其他非數字字符
-        let cleaned_text = text.replace(",", "").replace("%", "");
-        
-        // 嘗試解析為浮點數
-        cleaned_text.parse::<f64>().ok()
+        let text = text.replace(",", "").replace("%", "");
+        text.parse::<f64>().ok()
     }
 }

@@ -74,6 +74,31 @@ impl From<StockPrice> for StockPriceDto {
     }
 }
 
+impl From<StockPrice> for CreateStockPriceDto {
+    fn from(price: StockPrice) -> Self {
+        Self {
+            stock_id: price.stock_id.to_string(),
+            date: price.date.to_string(),
+            open: price.open,
+            high: price.high,
+            low: price.low,
+            close: price.close,
+            volume: price.volume,
+            change: price.change,
+            change_percent: price.change_percent,
+            turnover: price.turnover,
+            transactions: price.transactions,
+            pe_ratio: price.pe_ratio,
+            pb_ratio: price.pb_ratio,
+            dividend_yield: price.dividend_yield,
+            market_cap: price.market_cap,
+            foreign_buy: price.foreign_buy,
+            trust_buy: price.trust_buy,
+            dealer_buy: price.dealer_buy,
+        }
+    }
+}
+
 impl TryFrom<StockPriceDto> for StockPrice {
     type Error = anyhow::Error;
 

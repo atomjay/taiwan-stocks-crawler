@@ -67,6 +67,58 @@ src/
   └── main.rs                    # 主程式入口點
 ```
 
+### 系統數據流程
+
+以下是系統主要數據流程的說明：
+
+#### 爬蟲流程
+
+```
+main.rs (程序入口)
+  ↓
+StockCrawlerService.crawl_stocks() (爬取股票列表)
+  ↓
+PostgresStockRepository.save() (保存股票到資料庫)
+  ↓
+StockCrawlerService.crawl_stock_prices() (爬取股票價格)
+  ↓
+StockCrawlerService.crawl_stock_info() (爬取股票基本資訊)
+  ↓
+StockCrawlerService.crawl_institutional_investors() (爬取三大法人買賣超)
+  ↓
+PostgresStockPriceRepository.create() (保存股票價格到資料庫)
+```
+
+#### API 請求流程
+
+```
+HTTP 請求
+  ↓
+api_router.rs (路由分發)
+  ↓
+StockController/StockPriceController (控制器處理請求)
+  ↓
+StockService/StockPriceService (應用服務處理業務邏輯)
+  ↓
+PostgresStockRepository/PostgresStockPriceRepository (資料庫操作)
+  ↓
+HTTP 響應
+```
+
+#### 數據轉換流程
+
+```
+資料庫數據 (Stock/StockPrice 實體)
+  ↓
+應用服務 (StockService/StockPriceService)
+  ↓
+數據傳輸對象 (StockDto/StockPriceDto)
+  ↓
+控制器 (StockController/StockPriceController)
+  ↓
+JSON 響應
+```
+
 ## 使用方法
 
 ### 環境設置

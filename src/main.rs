@@ -1,65 +1,111 @@
 // 引入應用層服務
 use crate::application::services::{StockPriceService, StockService};
-// 引入領域層儲存庫介面
-use crate::domain::repositories::{StockPriceRepository, StockRepository};
+// 引入應用層 DTO
+use crate::application::dtos::{CreateStockDto, CreateStockPriceDto};
 // 引入基礎設施層的爬蟲服務
 use crate::infrastructure::external_services::StockCrawlerService;
 // 引入基礎設施層的資料庫儲存庫實現
 use crate::infrastructure::persistence::{PostgresStockPriceRepository, PostgresStockRepository};
 // 引入資料庫連接池創建函數
 use crate::infrastructure::persistence::database::create_pool;
-// 引入表現層控制器
-use crate::presentation::controllers::{StockController, StockPriceController};
-// 引入表現層 API 路由
-use crate::presentation::api::create_api_router;
+// 引入表現層控制器和處理函數
+use crate::presentation::controllers::{
+    StockController, StockPriceController,
+    get_all_stocks, get_stock_by_code, get_stock_prices_by_stock_id
+};
 // 引入 Axum Web 框架相關組件
-use axum::Router;
+use axum::{
+    Router,
+    routing::get,
+};
 // 引入環境變數處理庫
 use dotenv::dotenv;
 // 引入標準庫的錯誤處理模組
 use std::error::Error;
+use std::sync::Arc;
+use std::time::Duration;
 // 引入 Tokio 非同步運行時
 use tokio::net::TcpListener;
-// 引入 PostgreSQL 連接池類型
-use sqlx::postgres::PgPool;
 // 引入日誌記錄相關組件
 use tracing::{info, error};
 // 引入日誌訂閱器
 use tracing_subscriber;
-// 引入 UUID 生成庫
+
+// 引入領域實體
+use crate::domain::entities::StockPrice;
+
+// 引入 Uuid 類別
 use uuid::Uuid;
+
+// 定義 AppState 結構體
+#[derive(Clone)]
+pub struct AppState {
+    stock_controller: Arc<StockController>,
+    price_controller: Arc<StockPriceController>,
+}
 
 // 程式入口點
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // 初始化日誌系統
-    tracing_subscriber::fmt::init();
+    // 初始化系統
+    let (_pool, stock_service, price_service, stock_controller, price_controller) = initialize_system().await?;
+    
+    // 創建 API 路由
+    let app = create_api_router(stock_controller.clone(), price_controller.clone());
+    
+    // 執行爬蟲任務
+    let crawler_service = Arc::new(StockCrawlerService::new());
+    crawl_and_save_data(crawler_service, stock_service, price_service).await?;
+    
+    // 啟動 Web 服務器
+    start_web_server(app).await?;
+    
+    Ok(())
+}
+
+/// 初始化系統：設置日誌、環境變數和資料庫連接
+async fn initialize_system() -> Result<(
+    Arc<sqlx::PgPool>, 
+    Arc<StockService>, 
+    Arc<StockPriceService>, 
+    Arc<StockController>, 
+    Arc<StockPriceController>
+), Box<dyn Error>> {
+    // 初始化日誌系統，使用更明確的配置
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .init();
+    
+    println!("程式開始執行");
     info!("Starting Taiwan Stocks Crawler");
     
     // 載入環境變數
     dotenv().ok();
+    println!("環境變數載入完成");
     
-    // 從環境變數獲取資料庫連接字串
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set in .env file");
-    info!("連接到資料庫: {}", database_url);
+    // 從環境變量中獲取資料庫 URL
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL 環境變量未設置");
+    println!("資料庫 URL: {}", database_url);
+    info!("資料庫 URL: {}", database_url);
     
-    // 創建資料庫連接池
+    // 建立資料庫連接池
+    println!("正在建立資料庫連接池...");
     let pool = create_pool(&database_url).await?;
+    println!("資料庫連接建立成功");
     info!("資料庫連接建立成功");
     
-    // 確保資料庫結構是最新的
-    ensure_database_schema(&pool).await?;
-    info!("資料庫結構檢查完成");
+    // 使用遷移系統確保資料庫結構存在
+    run_migrations(&database_url).await?;
+    info!("資料庫遷移完成");
     
     // 初始化儲存庫
     let stock_repo = Arc::new(PostgresStockRepository::new(pool.clone()));
     let price_repo = Arc::new(PostgresStockPriceRepository::new(pool.clone()));
     info!("儲存庫初始化完成");
     
-    // 初始化爬蟲服務
-    let crawler_service = Arc::new(StockCrawlerService::new());
-    info!("股票爬蟲服務初始化完成");
+    // 將連接池包裝在 Arc 中
+    let pool_arc = Arc::new(pool);
     
     // 初始化應用服務
     let stock_service = Arc::new(StockService::new(stock_repo.clone()));
@@ -71,103 +117,96 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let price_controller = Arc::new(StockPriceController::new(price_service.clone()));
     info!("控制器初始化完成");
     
-    // 創建 API 路由
-    let app = create_api_router(stock_controller, price_controller);
+    Ok((pool_arc, stock_service, price_service, stock_controller, price_controller))
+}
+
+/// 創建 API 路由
+fn create_api_router(
+    stock_controller: Arc<StockController>,
+    price_controller: Arc<StockPriceController>
+) -> Router {
+    let app = Router::new()
+        .route("/api/stocks", get(get_all_stocks))
+        .route("/api/stocks/:code", get(get_stock_by_code))
+        .route("/api/stocks/:code/prices", get(get_stock_prices_by_stock_id))
+        .with_state(AppState {
+            stock_controller,
+            price_controller,
+        });
     
-    // 啟動爬蟲程序
-    let crawler_service = crawler_service.clone();
-    let stock_repo = stock_repo.clone();
-    let price_repo = price_repo.clone();
+    info!("API 路由初始化完成");
+    app
+}
+
+/// 爬取股票和價格數據並保存到資料庫
+async fn crawl_and_save_data(
+    crawler_service: Arc<StockCrawlerService>,
+    stock_service: Arc<StockService>,
+    price_service: Arc<StockPriceService>
+) -> Result<(), Box<dyn Error>> {
+    info!("開始股票爬蟲程序...");
     
-    tokio::spawn(async move {
-        info!("開始股票爬蟲程序...");
-        
-        // 爬取股票列表
-        match crawler_service.crawl_stock_list().await {
-            Ok(stocks) => {
-                info!("成功爬取 {} 支股票", stocks.len());
+    // 爬取股票列表
+    match crawler_service.crawl_stocks().await {
+        Ok(stocks) => {
+            info!("成功爬取 {} 支股票", stocks.len());
+            
+            // 保存股票到資料庫
+            for stock in stocks {
+                let stock_code = stock.code.clone();
+                let stock_name = stock.name.clone();
                 
-                // Crawl prices for each stock
-                for stock in &stocks { // 爬取所有股票的價格數據
-                    info!("爬取股票價格: {} - {}", stock.code, stock.name);
-                    
-                    // 先檢查股票是否存在於資料庫中
-                    match stock_repo.find_by_code(&stock.code).await {
-                        Ok(Some(db_stock)) => {
-                            info!("股票 {} 已存在於資料庫中，使用資料庫中的股票 ID", stock.code);
-                            
-                            match crawler_service.crawl_stock_prices(&stock.code).await {
-                                Ok(mut prices) => {
-                                    info!("成功爬取股票 {} 的 {} 筆價格資料", stock.code, prices.len());
-                                    
-                                    // 使用資料庫中的 stock_id
-                                    for price in &mut prices {
-                                        price.stock_id = db_stock.id;
-                                    }
-                                    
-                                    // Save prices to database
-                                    for price in &prices {
-                                        if let Err(e) = price_repo.create(price).await {
-                                            info!("儲存股票 {} 在 {} 的價格資料失敗: {}", 
-                                                  stock.code, price.date, e);
-                                        } else {
-                                            info!("儲存股票 {} 在 {} 的價格資料", stock.code, price.date);
-                                        }
-                                    }
-                                },
-                                Err(e) => {
-                                    info!("爬取股票 {} 的價格資料失敗: {}", stock.code, e);
-                                }
-                            }
-                        },
-                        Ok(None) => {
-                            info!("股票 {} 不存在於資料庫中，先儲存股票資訊", stock.code);
-                            if let Err(e) = stock_repo.save(stock).await {
-                                info!("儲存股票 {} 失敗: {}", stock.code, e);
-                            } else {
-                                info!("儲存股票: {} - {}", stock.code, stock.name);
+                // 先保存股票
+                match stock_service.create_stock(CreateStockDto {
+                    code: stock_code.clone(),
+                    name: stock_name.clone(),
+                }).await {
+                    Ok(_saved_stock) => {
+                        info!("保存股票成功: {} - {}", stock_code, stock_name);
+                        
+                        // 爬取股票價格
+                        match crawler_service.crawl_stock_prices(&stock_code).await {
+                            Ok(prices) => {
+                                info!("成功爬取 {} 的價格數據, 共 {} 筆", stock_code, prices.len());
                                 
-                                // 現在股票已經儲存，可以爬取價格資料了
-                                match crawler_service.crawl_stock_prices(&stock.code).await {
-                                    Ok(mut prices) => {
-                                        info!("成功爬取股票 {} 的 {} 筆價格資料", stock.code, prices.len());
-                                        
-                                        // 使用正確的 stock_id
-                                        for price in &mut prices {
-                                            price.stock_id = stock.id;
-                                        }
-                                        
-                                        // Save prices to database
-                                        for price in &prices {
-                                            if let Err(e) = price_repo.create(price).await {
-                                                info!("儲存股票 {} 在 {} 的價格資料失敗: {}", 
-                                                      stock.code, price.date, e);
-                                            } else {
-                                                info!("儲存股票 {} 在 {} 的價格資料", stock.code, price.date);
+                                // 從資料庫中查詢股票的 ID
+                                match stock_service.get_stock_by_code(&stock_code).await {
+                                    Ok(Some(db_stock)) => {
+                                        // 保存價格到資料庫，使用從資料庫中查詢到的股票 ID
+                                        for price in prices {
+                                            let price_with_stock_id = StockPrice {
+                                                stock_id: Uuid::parse_str(&db_stock.id).unwrap_or_default(),
+                                                ..price
+                                            };
+                                            
+                                            match price_service.create_stock_price(CreateStockPriceDto::from(price_with_stock_id)).await {
+                                                Ok(_) => info!("保存價格成功: {} - {}", stock_code, price.date),
+                                                Err(e) => error!("保存價格失敗: {} - {}, 錯誤: {}", stock_code, price.date, e),
                                             }
                                         }
                                     },
-                                    Err(e) => {
-                                        info!("爬取股票 {} 的價格資料失敗: {}", stock.code, e);
-                                    }
+                                    Ok(None) => error!("無法從資料庫中查詢到股票: {}", stock_code),
+                                    Err(e) => error!("查詢股票失敗: {}, 錯誤: {}", stock_code, e),
                                 }
-                            }
-                        },
-                        Err(e) => {
-                            info!("查詢股票 {} 失敗: {}", stock.code, e);
+                            },
+                            Err(e) => error!("爬取價格失敗: {}, 錯誤: {}", stock_code, e),
                         }
-                    }
+                        
+                        // 避免請求過於頻繁
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    },
+                    Err(e) => error!("保存股票失敗: {} - {}, 錯誤: {}", stock_code, stock_name, e),
                 }
-                
-                info!("股票爬蟲程序完成");
-            },
-            Err(e) => {
-                error!("爬取股票列表失敗: {}", e);
             }
-        }
-    });
+        },
+        Err(e) => error!("爬取股票列表失敗: {}", e),
+    }
     
-    // 啟動 Web 服務器
+    Ok(())
+}
+
+/// 啟動 Web 服務器
+async fn start_web_server(app: Router) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind("0.0.0.0:3000").await?;
     info!("API 服務器啟動在 http://0.0.0.0:3000");
     axum::serve(listener, app).await?;
@@ -175,54 +214,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// 確保資料庫結構是最新的，如果需要則添加缺少的欄位
-async fn ensure_database_schema(pool: &PgPool) -> Result<(), Box<dyn Error>> {
-    info!("檢查資料庫結構...");
-    
-    // 檢查 stocks 表是否存在，如果不存在則創建
-    sqlx::query(r#"
-        CREATE TABLE IF NOT EXISTS stocks (
-            id UUID PRIMARY KEY,
-            code VARCHAR(10) UNIQUE NOT NULL,
-            name VARCHAR(100) NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    "#)
-    .execute(pool)
-    .await?;
-    
-    // 檢查 stock_prices 表是否存在，如果不存在則創建
-    sqlx::query(r#"
-        CREATE TABLE IF NOT EXISTS stock_prices (
-            id UUID PRIMARY KEY,
-            stock_id UUID NOT NULL REFERENCES stocks(id),
-            date DATE NOT NULL,
-            open NUMERIC(10, 2) NOT NULL,
-            high NUMERIC(10, 2) NOT NULL,
-            low NUMERIC(10, 2) NOT NULL,
-            close NUMERIC(10, 2) NOT NULL,
-            volume NUMERIC(20, 0) NOT NULL,
-            change NUMERIC(10, 2) NOT NULL DEFAULT 0.0,
-            change_percent NUMERIC(10, 2) NOT NULL DEFAULT 0.0,
-            turnover NUMERIC(20, 0) NOT NULL DEFAULT 0,
-            transactions INTEGER NOT NULL DEFAULT 0,
-            pe_ratio NUMERIC(10, 2),
-            pb_ratio NUMERIC(10, 2),
-            dividend_yield NUMERIC(10, 2),
-            market_cap NUMERIC(20, 0),
-            foreign_buy NUMERIC(20, 0),
-            trust_buy NUMERIC(20, 0),
-            dealer_buy NUMERIC(20, 0),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            UNIQUE(stock_id, date)
-        )
-    "#)
-    .execute(pool)
-    .await?;
-    
-    Ok(())
+// 使用遷移系統確保資料庫結構存在
+async fn run_migrations(database_url: &str) -> Result<(), Box<dyn Error>> {
+    // 調用 database.rs 中的 run_migrations 函數
+    infrastructure::persistence::database::run_migrations(database_url).await
 }
 
 // 模組聲明

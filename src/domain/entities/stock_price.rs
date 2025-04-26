@@ -25,6 +25,32 @@ pub struct StockPrice {
     pub dealer_buy: Option<i64>,     // 自營商買賣超
 }
 
+impl Default for StockPrice {
+    fn default() -> Self {
+        Self {
+            id: Uuid::nil(),
+            stock_id: Uuid::nil(),
+            date: Date::from_calendar_date(2025, time::Month::January, 1).unwrap(),
+            open: 0.0,
+            high: 0.0,
+            low: 0.0,
+            close: 0.0,
+            volume: 0,
+            change: 0.0,
+            change_percent: 0.0,
+            turnover: 0,
+            transactions: 0,
+            pe_ratio: None,
+            pb_ratio: None,
+            dividend_yield: None,
+            market_cap: None,
+            foreign_buy: None,
+            trust_buy: None,
+            dealer_buy: None,
+        }
+    }
+}
+
 impl StockPrice {
     pub fn new(
         stock_id: Uuid,
