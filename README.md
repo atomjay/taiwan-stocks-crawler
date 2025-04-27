@@ -68,56 +68,259 @@ src/
   └── main.rs                    # 主程式入口點
 ```
 
-### 系統數據流程
+## 系統流程圖與 UML 圖表
 
-以下是系統主要數據流程的說明：
+### 系統流程圖 (Mermaid Flowchart)
 
-#### 爬蟲流程
-
-```
-main.rs (程序入口)
-  ↓
-StockCrawlerService.crawl_stocks() (爬取股票列表)
-  ↓
-PostgresStockRepository.save() (保存股票到資料庫)
-  ↓
-StockCrawlerService.crawl_stock_prices() (爬取股票價格)
-  ↓
-StockCrawlerService.crawl_stock_info() (爬取股票基本資訊)
-  ↓
-StockCrawlerService.crawl_institutional_investors() (爬取三大法人買賣超)
-  ↓
-PostgresStockPriceRepository.create() (保存股票價格到資料庫)
-```
-
-#### API 請求流程
-
-```
-HTTP 請求
-  ↓
-routes.rs (路由分發)
-  ↓
-StockController/StockPriceController (控制器處理請求)
-  ↓
-StockService/StockPriceService (應用服務處理業務邏輯)
-  ↓
-PostgresStockRepository/PostgresStockPriceRepository (資料庫操作)
-  ↓
-HTTP 響應
+```mermaid
+flowchart TD
+    A[程式啟動] --> B[初始化系統]
+    B --> B1[設置日誌系統]
+    B --> B2[載入環境變數]
+    B --> B3[建立資料庫連接池]
+    B --> B4[執行資料庫遷移]
+    B --> B5[初始化儲存庫]
+    B --> B6[初始化應用服務]
+    B --> B7[初始化控制器]
+    
+    B7 --> C[創建 API 路由]
+    B7 --> D[執行爬蟲任務]
+    
+    D --> D1[爬取股票列表]
+    D1 --> D2[保存股票到資料庫]
+    D2 --> D3[爬取股票價格]
+    D3 --> D4[保存價格到資料庫]
+    
+    C --> E[啟動 Web 服務器]
+    
+    subgraph 爬蟲流程
+    D1
+    D3 --> D3_1[爬取股票基本資訊]
+    D3 --> D3_2[爬取三大法人買賣超]
+    end
 ```
 
-#### 數據轉換流程
+### 系統架構圖 (Mermaid Flowchart)
 
+```mermaid
+flowchart TB
+    subgraph 表現層 - API
+        A1[Stock Controller]
+        A2[Stock Price Controller]
+        A3[API 路由]
+    end
+    
+    subgraph 應用層 - Application
+        B1[Stock Service]
+        B2[Stock Price Service]
+        B3[DTOs]
+    end
+    
+    subgraph 領域層 - Domain
+        C1[Stock 實體]
+        C2[Stock Price 實體]
+        C3[儲存庫介面]
+    end
+    
+    subgraph 基礎設施層 - Infrastructure
+        D1[Stock Crawler Service]
+        D2[Postgres Stock Repository]
+        D3[Postgres Stock Price Repository]
+        D4[資料庫連接]
+    end
+    
+    A1 --> B1
+    A2 --> B2
+    A3 --> A1
+    A3 --> A2
+    
+    B1 --> C1
+    B1 --> C3
+    B2 --> C2
+    B2 --> C3
+    
+    C3 --> D2
+    C3 --> D3
+    
+    D1 --> C1
+    D1 --> C2
+    D2 --> D4
+    D3 --> D4
 ```
-資料庫數據 (Stock/StockPrice 實體)
-  ↓
-應用服務 (StockService/StockPriceService)
-  ↓
-數據傳輸對象 (StockDto/StockPriceDto)
-  ↓
-控制器 (StockController/StockPriceController)
-  ↓
-JSON 響應
+
+### 類別圖 (UML Class Diagram)
+
+```mermaid
+classDiagram
+    class Stock {
+        +Uuid id
+        +String code
+        +String name
+        +OffsetDateTime last_updated
+        +new(code, name): Stock
+    }
+    
+    class StockPrice {
+        +Uuid id
+        +Uuid stock_id
+        +Date date
+        +f64 open
+        +f64 high
+        +f64 low
+        +f64 close
+        +u64 volume
+        +f64 change
+        +f64 change_percent
+        +u64 turnover
+        +u64 transactions
+        +Option~f64~ pe_ratio
+        +Option~f64~ pb_ratio
+        +Option~f64~ dividend_yield
+        +Option~u64~ market_cap
+        +Option~i64~ foreign_buy
+        +Option~i64~ trust_buy
+        +Option~i64~ dealer_buy
+        +new(...): StockPrice
+        +with_details(...): StockPrice
+        +calculate_change(prev_close): void
+    }
+    
+    class StockCrawlerService {
+        +new(): StockCrawlerService
+        +crawl_stocks(): Result~Vec~Stock~~
+        +crawl_stock_prices(stock_code): Result~Vec~StockPrice~~
+        +crawl_stock_info(stock_code): Result~HashMap~String, f64~~
+        +crawl_institutional_investors(stock_code): Result~HashMap~String, (i64, i64, i64)~~
+        -parse_float_from_text(text): Option~f64~
+        -extract_value_from_document(document, label): Option~f64~
+    }
+    
+    class StockService {
+        -stock_repository: Arc~dyn StockRepository~
+        +new(stock_repository): StockService
+        +create_stock(dto): Result~Stock~
+        +get_stock_by_code(code): Result~Option~Stock~~
+        +get_all_stocks(): Result~Vec~Stock~~
+    }
+    
+    class StockPriceService {
+        -price_repository: Arc~dyn StockPriceRepository~
+        +new(price_repository): StockPriceService
+        +create_stock_price(dto): Result~StockPrice~
+        +get_stock_prices_by_stock_id(stock_id): Result~Vec~StockPrice~~
+    }
+    
+    class StockRepository {
+        <<interface>>
+        +create(stock): Result~Stock~
+        +find_by_code(code): Result~Option~Stock~~
+        +find_all(): Result~Vec~Stock~~
+    }
+    
+    class StockPriceRepository {
+        <<interface>>
+        +create(price): Result~StockPrice~
+        +find_by_stock_id(stock_id): Result~Vec~StockPrice~~
+    }
+    
+    class PostgresStockRepository {
+        -pool: PgPool
+        +new(pool): PostgresStockRepository
+        +create(stock): Result~Stock~
+        +find_by_code(code): Result~Option~Stock~~
+        +find_all(): Result~Vec~Stock~~
+    }
+    
+    class PostgresStockPriceRepository {
+        -pool: PgPool
+        +new(pool): PostgresStockPriceRepository
+        +create(price): Result~StockPrice~
+        +find_by_stock_id(stock_id): Result~Vec~StockPrice~~
+    }
+    
+    Stock "1" -- "n" StockPrice : has
+    StockRepository <|.. PostgresStockRepository : implements
+    StockPriceRepository <|.. PostgresStockPriceRepository : implements
+    StockService --> StockRepository : uses
+    StockPriceService --> StockPriceRepository : uses
+    StockCrawlerService ..> Stock : creates
+    StockCrawlerService ..> StockPrice : creates
+```
+
+### 系統執行流程 (Sequence Diagram)
+
+```mermaid
+sequenceDiagram
+    participant Main as 主程式
+    participant System as 系統初始化
+    participant Crawler as 股票爬蟲服務
+    participant StockSvc as 股票服務
+    participant PriceSvc as 股票價格服務
+    participant DB as 資料庫
+    participant Web as Web服務器
+    
+    Main->>System: 初始化系統
+    System->>DB: 建立資料庫連接
+    System->>DB: 執行資料庫遷移
+    System-->>Main: 返回初始化完成
+    
+    Main->>Crawler: 開始爬蟲任務
+    Crawler->>Crawler: 爬取股票列表
+    
+    loop 對每支股票
+        Crawler->>StockSvc: 保存股票
+        StockSvc->>DB: 儲存股票資料
+        DB-->>StockSvc: 儲存成功
+        
+        Crawler->>Crawler: 爬取股票價格
+        Crawler->>Crawler: 爬取股票基本資訊
+        Crawler->>Crawler: 爬取三大法人買賣超
+        
+        Crawler->>StockSvc: 查詢股票ID
+        StockSvc->>DB: 查詢股票
+        DB-->>StockSvc: 返回股票資料
+        StockSvc-->>Crawler: 返回股票ID
+        
+        loop 對每個價格資料
+            Crawler->>PriceSvc: 保存價格
+            PriceSvc->>DB: 儲存價格資料
+            DB-->>PriceSvc: 儲存成功
+        end
+    end
+    
+    Main->>Web: 啟動Web服務器
+    Web->>Web: 設置API路由
+    Web-->>Main: 服務器啟動成功
+```
+
+### 系統組件圖 (Component Diagram)
+
+```mermaid
+flowchart LR
+    subgraph 外部系統
+        E1[台灣證券交易所]
+        E2[公開資訊觀測站]
+    end
+    
+    subgraph 爬蟲系統
+        C1[股票爬蟲服務]
+        C2[資料處理服務]
+        C3[資料儲存服務]
+        C4[Web API 服務]
+        
+        C1 --> C2
+        C2 --> C3
+        C3 --> C4
+    end
+    
+    subgraph 資料庫
+        D1[(PostgreSQL)]
+    end
+    
+    E1 --> C1
+    E2 --> C1
+    C3 --> D1
+    C4 --> D1
 ```
 
 ## 使用方法
