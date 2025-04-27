@@ -1,5 +1,5 @@
 // 引入應用層服務
-use crate::application::services::{StockPriceService, StockService};
+use crate::application::services::{StockPriceService, StockService, NotificationService};
 // 引入應用層 DTO
 use crate::application::dtos::{CreateStockDto, CreateStockPriceDto};
 // 引入基礎設施層的爬蟲服務
@@ -28,13 +28,16 @@ use std::sync::Arc;
 use std::time::Duration;
 // 引入 Tokio 非同步運行時
 use tokio::net::TcpListener;
+use tokio::time as tokio_time;
+// 引入 time 庫
+use time::{OffsetDateTime, UtcOffset};
 // 引入日誌記錄相關組件
 use tracing::{info, error};
 // 引入日誌訂閱器
 use tracing_subscriber;
 
 // 引入領域實體
-use crate::domain::models::{Stock, StockPrice};
+use crate::domain::models::StockPrice;
 
 // 引入 Uuid 類別
 use uuid::Uuid;
@@ -50,19 +53,106 @@ pub struct AppState {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // 初始化系統
-    let (_pool, stock_service, price_service, stock_controller, price_controller) = initialize_system().await?;
+    let (_pool, stock_service, price_service, stock_controller, price_controller) = match initialize_system().await {
+        Ok(result) => result,
+        Err(e) => {
+            error!("系統初始化失敗: {}", e);
+            return Err(e.into());
+        }
+    };
     
     // 創建 API 路由
     let app = create_api_router(stock_controller.clone(), price_controller.clone());
     
-    // 執行爬蟲任務
+    // 初始化爬蟲服務
     let crawler_service = Arc::new(StockCrawlerService::new());
-    crawl_and_save_data(crawler_service, stock_service, price_service).await?;
+    
+    // 執行爬蟲任務
+    if let Err(e) = crawl_and_save_data(crawler_service.clone(), stock_service.clone(), price_service.clone()).await {
+        error!("爬蟲任務執行失敗: {}", e);
+    } else {
+        info!("爬蟲任務執行成功");
+    }
+    
+    // 初始化通知服務
+    let notification_service = match NotificationService::new(stock_service.clone(), price_service.clone()) {
+        Ok(service) => {
+            info!("通知服務初始化成功");
+            Arc::new(service)
+        },
+        Err(e) => {
+            error!("通知服務初始化失敗: {}", e);
+            return Err(e.into());
+        }
+    };
+    
+    // 發送初始通知
+    if let Err(e) = notification_service.send_custom_message("台灣股票爬蟲系統已啟動，開始監控股票數據").await {
+        error!("初始通知發送失敗: {}", e);
+    } else {
+        info!("初始通知發送成功");
+    }
+    
+    // 啟動定時通知任務 - 由於 Send 問題，暫時不使用 tokio::spawn
+    // 直接在主線程中執行一次通知
+    info!("執行一次股票通知測試");
+    if let Err(e) = notification_service.send_daily_summary().await {
+        error!("每日摘要通知測試發送失敗: {}", e);
+    } else {
+        info!("每日摘要通知測試發送成功");
+    }
     
     // 啟動 Web 服務器
-    start_web_server(app).await?;
+    if let Err(e) = start_web_server(app).await {
+        error!("Web 服務器啟動失敗: {}", e);
+        return Err(e.into());
+    } else {
+        info!("Web 服務器啟動成功");
+    }
     
     Ok(())
+}
+
+/// 排程每日通知任務
+async fn schedule_daily_notification(
+    notification_service: Arc<NotificationService>,
+    stock_service: Arc<StockService>,
+    price_service: Arc<StockPriceService>,
+    crawler_service: Arc<StockCrawlerService>
+) {
+    info!("啟動每日通知排程任務");
+    
+    // 設定每日固定時間發送通知 (例如：每天下午 3:30，台灣股市收盤後)
+    let mut interval = tokio_time::interval(Duration::from_secs(60 * 60 * 24)); // 每24小時執行一次
+    
+    loop {
+        interval.tick().await;
+        
+        // 檢查當前時間是否為工作日且在下午 3:30 左右
+        let now = OffsetDateTime::now_utc().to_offset(UtcOffset::from_hms(8, 0, 0).unwrap());
+        let hour = now.hour();
+        let minute = now.minute();
+        let weekday = now.weekday();
+        
+        // 如果是週一到週五，且時間在下午 3:30 左右
+        if (weekday.number_from_monday() <= 5) && (hour == 15 && minute >= 30 && minute <= 40) {
+            info!("開始執行每日股票數據爬取和通知任務");
+            
+            // 重新爬取最新數據
+            if let Err(e) = crawl_and_save_data(crawler_service.clone(), stock_service.clone(), price_service.clone()).await {
+                error!("每日股票數據爬取失敗: {}", e);
+            } else {
+                info!("每日股票數據爬取成功");
+            }
+            
+            // 發送每日摘要通知
+            if let Err(e) = notification_service.send_daily_summary().await {
+                error!("每日摘要通知發送失敗: {}", e);
+            } else {
+                info!("每日摘要通知發送成功");
+            }
+        }
+    }
 }
 
 /// 初始化系統：設置日誌、環境變數和資料庫連接

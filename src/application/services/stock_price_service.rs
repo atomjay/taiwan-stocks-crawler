@@ -5,6 +5,8 @@ use crate::domain::value_objects::Result;
 use std::sync::Arc;
 use time::Date;
 use uuid::Uuid;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
 
 pub struct StockPriceService {
     stock_price_repository: Arc<dyn StockPriceRepository>,
@@ -21,19 +23,32 @@ impl StockPriceService {
         let stock_id = Uuid::parse_str(&dto.stock_id)?;
         let date = Date::parse(&dto.date, &time::format_description::well_known::Iso8601::DATE)?;
 
+        // 將 f64 轉換為 BigDecimal
+        let open = BigDecimal::from_str(&dto.open.to_string())?;
+        let high = BigDecimal::from_str(&dto.high.to_string())?;
+        let low = BigDecimal::from_str(&dto.low.to_string())?;
+        let close = BigDecimal::from_str(&dto.close.to_string())?;
+        let change = BigDecimal::from_str(&dto.change.to_string())?;
+        let change_percent = BigDecimal::from_str(&dto.change_percent.to_string())?;
+        
+        // 轉換可選值
+        let pe_ratio = dto.pe_ratio.map(|v| BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0)));
+        let pb_ratio = dto.pb_ratio.map(|v| BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0)));
+        let dividend_yield = dto.dividend_yield.map(|v| BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0)));
+
         let stock_price = StockPrice::new(
             stock_id,
             date,
-            dto.open,
-            dto.high,
-            dto.low,
-            dto.close,
+            open,
+            high,
+            low,
+            close,
             dto.volume,
             dto.turnover,
             dto.transactions,
-            dto.pe_ratio,
-            dto.pb_ratio,
-            dto.dividend_yield,
+            pe_ratio,
+            pb_ratio,
+            dividend_yield,
             dto.market_cap,
             dto.foreign_buy,
             dto.trust_buy,
@@ -43,14 +58,14 @@ impl StockPriceService {
         // 設置變化值
         let stock_price = if dto.change != 0.0 || dto.change_percent != 0.0 {
             let mut sp = stock_price;
-            sp.change = dto.change;
-            sp.change_percent = dto.change_percent;
+            sp.change = change;
+            sp.change_percent = change_percent;
             sp
         } else {
             stock_price
         };
 
-        self.stock_price_repository.create(&stock_price).await?;
+        let _created_price = self.stock_price_repository.create(&stock_price).await?;
         Ok(StockPriceDto::from(stock_price))
     }
 

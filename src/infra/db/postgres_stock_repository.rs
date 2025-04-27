@@ -5,8 +5,6 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
-use bigdecimal::BigDecimal;
-use std::str::FromStr;
 
 pub struct PostgresStockRepository {
     pool: PgPool,

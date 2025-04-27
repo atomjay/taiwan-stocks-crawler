@@ -29,14 +29,17 @@ chrono = { version = "0.4", features = ["serde"] }
 scraper = "0.18"
 # UUID generation
 uuid = { version = "1.6", features = ["v4", "serde"] }
+# Decimal
+bigdecimal = { version = "0.4", features = ["serde"] }
 # Async traits
 async-trait = "0.1"
 # Web framework
 axum = { version = "0.7", features = ["json"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }
-bigdecimal = "0.4.8"
 # Regular expressions
 regex = "1.10.2"
+# Character encoding
+encoding_rs = "0.8"
 
 [dev-dependencies]

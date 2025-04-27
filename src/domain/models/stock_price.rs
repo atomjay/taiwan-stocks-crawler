@@ -1,24 +1,25 @@
 use serde::{Deserialize, Serialize};
 use time::Date;
 use uuid::Uuid;
+use bigdecimal::BigDecimal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockPrice {
     pub id: Uuid,
     pub stock_id: Uuid,
     pub date: Date,
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
+    pub open: BigDecimal,
+    pub high: BigDecimal,
+    pub low: BigDecimal,
+    pub close: BigDecimal,
     pub volume: u64,
-    pub change: f64,           // 漲跌幅
-    pub change_percent: f64,   // 漲跌百分比
+    pub change: BigDecimal,           // 漲跌幅
+    pub change_percent: BigDecimal,   // 漲跌百分比
     pub turnover: u64,         // 成交金額
     pub transactions: u64,     // 成交筆數
-    pub pe_ratio: Option<f64>, // 本益比
-    pub pb_ratio: Option<f64>, // 股價淨值比
-    pub dividend_yield: Option<f64>, // 殖利率
+    pub pe_ratio: Option<BigDecimal>, // 本益比
+    pub pb_ratio: Option<BigDecimal>, // 股價淨值比
+    pub dividend_yield: Option<BigDecimal>, // 殖利率
     pub market_cap: Option<u64>,     // 市值
     pub foreign_buy: Option<i64>,    // 外資買賣超
     pub trust_buy: Option<i64>,      // 投信買賣超
@@ -31,13 +32,13 @@ impl Default for StockPrice {
             id: Uuid::nil(),
             stock_id: Uuid::nil(),
             date: Date::from_calendar_date(2025, time::Month::January, 1).unwrap(),
-            open: 0.0,
-            high: 0.0,
-            low: 0.0,
-            close: 0.0,
+            open: BigDecimal::from(0),
+            high: BigDecimal::from(0),
+            low: BigDecimal::from(0),
+            close: BigDecimal::from(0),
             volume: 0,
-            change: 0.0,
-            change_percent: 0.0,
+            change: BigDecimal::from(0),
+            change_percent: BigDecimal::from(0),
             turnover: 0,
             transactions: 0,
             pe_ratio: None,
@@ -55,16 +56,16 @@ impl StockPrice {
     pub fn new(
         stock_id: Uuid,
         date: Date,
-        open: f64,
-        high: f64,
-        low: f64,
-        close: f64,
+        open: BigDecimal,
+        high: BigDecimal,
+        low: BigDecimal,
+        close: BigDecimal,
         volume: u64,
         turnover: u64,
         transactions: u64,
-        pe_ratio: Option<f64>,
-        pb_ratio: Option<f64>,
-        dividend_yield: Option<f64>,
+        pe_ratio: Option<BigDecimal>,
+        pb_ratio: Option<BigDecimal>,
+        dividend_yield: Option<BigDecimal>,
         market_cap: Option<u64>,
         foreign_buy: Option<i64>,
         trust_buy: Option<i64>,
@@ -79,8 +80,8 @@ impl StockPrice {
             low,
             close,
             volume,
-            change: 0.0,
-            change_percent: 0.0,
+            change: BigDecimal::from(0),
+            change_percent: BigDecimal::from(0),
             turnover,
             transactions,
             pe_ratio,
@@ -96,18 +97,18 @@ impl StockPrice {
     pub fn with_details(
         stock_id: Uuid,
         date: Date,
-        open: f64,
-        high: f64,
-        low: f64,
-        close: f64,
+        open: BigDecimal,
+        high: BigDecimal,
+        low: BigDecimal,
+        close: BigDecimal,
         volume: u64,
-        change: f64,
-        change_percent: f64,
+        change: BigDecimal,
+        change_percent: BigDecimal,
         turnover: u64,
         transactions: u64,
-        pe_ratio: Option<f64>,
-        pb_ratio: Option<f64>,
-        dividend_yield: Option<f64>,
+        pe_ratio: Option<BigDecimal>,
+        pb_ratio: Option<BigDecimal>,
+        dividend_yield: Option<BigDecimal>,
         market_cap: Option<u64>,
         foreign_buy: Option<i64>,
         trust_buy: Option<i64>,
@@ -136,10 +137,10 @@ impl StockPrice {
         }
     }
 
-    pub fn calculate_change(&mut self, prev_close: f64) {
-        if prev_close > 0.0 {
-            self.change = self.close - prev_close;
-            self.change_percent = (self.change / prev_close) * 100.0;
+    pub fn calculate_change(&mut self, prev_close: BigDecimal) {
+        if prev_close > BigDecimal::from(0) {
+            self.change = self.close.clone() - prev_close.clone();
+            self.change_percent = (self.change.clone() / prev_close) * BigDecimal::from(100);
         }
     }
 }

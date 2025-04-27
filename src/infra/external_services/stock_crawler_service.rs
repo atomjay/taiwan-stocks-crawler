@@ -3,16 +3,17 @@ use crate::domain::models::{Stock, StockPrice};
 use anyhow::Result;
 use reqwest::Client;
 use scraper::{Html, Selector, Element};
-use std::collections::HashMap;
 use time::Date;
-use tracing::{info, error};
 use uuid::Uuid;
+use std::collections::HashMap;
+use tracing::info;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
+use encoding_rs::BIG5;
 
 /// 股票爬蟲服務結構體
 /// 股票爬蟲服務，用於爬取股票列表和股票價格數據
-pub struct StockCrawlerService {
-    // 可以添加一些配置或客戶端
-}
+pub struct StockCrawlerService {}
 
 impl StockCrawlerService {
     /// 創建新的股票爬蟲服務實例
@@ -31,11 +32,14 @@ impl StockCrawlerService {
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
             .send()
             .await?
-            .text()
+            .bytes()
             .await?;
         
+        // 使用 big5 編碼解析響應內容，台灣交易所網站使用 big5 編碼
+        let response_text = BIG5.decode(&response).0.into_owned();
+        
         // 使用 scraper 解析 HTML
-        let document = Html::parse_document(&response);
+        let document = Html::parse_document(&response_text);
         
         // 更精確的選擇器，直接選取表格的第二行開始的每一行
         let tr_selector = Selector::parse("table.h4 tr").unwrap();
@@ -125,16 +129,16 @@ impl StockCrawlerService {
                         let turnover = turnover_text.parse::<u64>().unwrap_or(0);
                         
                         let open_text = cells[3].text().collect::<String>();
-                        let open = self.parse_float_from_text(&open_text);
+                        let open = self.parse_bigdecimal_from_text(&open_text);
                         
                         let high_text = cells[4].text().collect::<String>();
-                        let high = self.parse_float_from_text(&high_text);
+                        let high = self.parse_bigdecimal_from_text(&high_text);
                         
                         let low_text = cells[5].text().collect::<String>();
-                        let low = self.parse_float_from_text(&low_text);
+                        let low = self.parse_bigdecimal_from_text(&low_text);
                         
                         let close_text = cells[6].text().collect::<String>();
-                        let close = self.parse_float_from_text(&close_text);
+                        let close = self.parse_bigdecimal_from_text(&close_text);
                         
                         let transactions_text = cells[8].text().collect::<String>().replace(",", "");
                         let transactions = transactions_text.parse::<u64>().unwrap_or(0);
@@ -142,9 +146,9 @@ impl StockCrawlerService {
                         // 爬取股票基本資訊（本益比、股價淨值比、殖利率等）
                         let stock_info = self.crawl_stock_info(stock_code).await?;
                         
-                        let pe_ratio = stock_info.get("本益比").cloned();
-                        let pb_ratio = stock_info.get("股價淨值比").cloned();
-                        let dividend_yield = stock_info.get("殖利率").cloned();
+                        let pe_ratio = stock_info.get("本益比").map(|&v| BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0)));
+                        let pb_ratio = stock_info.get("股價淨值比").map(|&v| BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0)));
+                        let dividend_yield = stock_info.get("殖利率").map(|&v| BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0)));
                         let market_cap = stock_info.get("市值").map(|v| *v as u64);
                         
                         // 爬取三大法人買賣超資訊
@@ -158,24 +162,30 @@ impl StockCrawlerService {
                         
                         // 計算漲跌幅
                         let change = if prices.is_empty() { 
-                            0.0 
+                            BigDecimal::from(0)
                         } else { 
-                            close.unwrap_or(0.0) - prices.last().unwrap().close
+                            close.clone().unwrap_or_else(|| BigDecimal::from(0)) - prices.last().unwrap().close.clone()
                         };
-                        let change_percent = if prices.is_empty() || prices.last().unwrap_or(&StockPrice::default()).close == 0.0 {
-                            0.0
+                        
+                        let change_percent = if prices.is_empty() || prices.last().unwrap_or(&StockPrice::default()).close == BigDecimal::from(0) {
+                            BigDecimal::from(0)
                         } else {
-                            change / prices.last().unwrap().close * 100.0
+                            let prev_close = prices.last().unwrap().close.clone();
+                            if prev_close != BigDecimal::from(0) {
+                                (change.clone() / prev_close) * BigDecimal::from(100)
+                            } else {
+                                BigDecimal::from(0)
+                            }
                         };
                         
                         // 從股票基本資訊中獲取其他數據
                         let stock_price = StockPrice::with_details(
                             Uuid::nil(),
                             date,
-                            open.unwrap_or(0.0),
-                            high.unwrap_or(0.0),
-                            low.unwrap_or(0.0),
-                            close.unwrap_or(0.0),
+                            open.unwrap_or_else(|| BigDecimal::from(0)),
+                            high.unwrap_or_else(|| BigDecimal::from(0)),
+                            low.unwrap_or_else(|| BigDecimal::from(0)),
+                            close.unwrap_or_else(|| BigDecimal::from(0)),
                             volume as u64,
                             change,
                             change_percent,
@@ -476,50 +486,19 @@ impl StockCrawlerService {
     
     /// 從文本中解析浮點數
     fn parse_float_from_text(&self, text: &str) -> Option<f64> {
-        // 移除常見的非數字字符
-        let text = text.replace(",", "")
-                       .replace("%", "")
-                       .replace("$", "")
-                       .replace("NT$", "")
-                       .replace("億", "00000000")
-                       .replace("萬", "0000")
-                       .replace("千", "000")
-                       .replace("百", "00")
-                       .replace("十", "0")
-                       .replace("：", "")
-                       .replace(":", "")
-                       .replace("(", "")
-                       .replace(")", "")
-                       .replace("[", "")
-                       .replace("]", "")
-                       .replace(" ", "")
-                       .trim()
-                       .to_string();
-        
-        // 嘗試直接解析
-        if let Ok(value) = text.parse::<f64>() {
-            return Some(value);
+        let text = text.trim().replace(",", "");
+        if text.is_empty() || text == "--" {
+            return None;
         }
-        
-        // 嘗試從文本中提取數字部分
-        let number_regex = regex::Regex::new(r"[-+]?\d*\.?\d+").unwrap_or_else(|_| {
-            // 如果正則表達式創建失敗，使用簡單的方法
-            return regex::Regex::new(r"\d+").unwrap();
-        });
-        
-        if let Some(captures) = number_regex.find(&text) {
-            if let Ok(value) = captures.as_str().parse::<f64>() {
-                return Some(value);
-            }
+        text.parse::<f64>().ok()
+    }
+    
+    /// 從文本中解析 BigDecimal
+    fn parse_bigdecimal_from_text(&self, text: &str) -> Option<BigDecimal> {
+        let text = text.trim().replace(",", "");
+        if text.is_empty() || text == "--" {
+            return None;
         }
-        
-        // 如果上述方法都失敗，嘗試更複雜的解析方法
-        for word in text.split_whitespace() {
-            if let Ok(value) = word.parse::<f64>() {
-                return Some(value);
-            }
-        }
-        
-        None
+        BigDecimal::from_str(&text).ok()
     }
 }
